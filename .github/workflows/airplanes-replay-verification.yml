@@ -18,7 +18,7 @@ jobs:
           python - <<'PY'
           import urllib.request, urllib.error
 
-          base = "https://globe.airplanes.live/globe_history/2026/08/15/heatmap"
+          base = "https://globe.airplanes.live/globe_history/2026/06/16/heatmap"
           names = ["00.bin.ttf","01.bin.ttf","02.bin.ttf","03.bin.ttf","06.bin.ttf","0c.bin.ttf","12.bin.ttf","17.bin.ttf","23.bin.ttf","ff.bin.ttf","heatmap.bin.ttf"]
           for name in names:
               url=f"{base}/{name}"
@@ -32,14 +32,14 @@ jobs:
                   print(f"HEATMAP_HEAD_FAIL name={name} err={type(e).__name__}:{e}")
           PY
 
-      - name: Decode sequential replay chunks and find DLH732
+      - name: Decode sequential replay chunks and find QFA27
         shell: bash
         run: |
           set -e
           mkdir -p /tmp/replay
           cd /tmp/replay
           curl -fsSL -o replay_analyzer.py https://raw.githubusercontent.com/WeegeeNumbuh1/tar1090-replay-analyzer/main/replay_analyzer.py
-          for h in 37 38 39 40 41; do
+          for h in 03 04 05 06 07 08; do
             curl -fsSL -o "${h}.bin" "https://globe.airplanes.live/globe_history/2026/08/15/heatmap/${h}.bin.ttf"
           done
           python - <<'PY'
@@ -50,12 +50,12 @@ jobs:
           ra=importlib.util.module_from_spec(spec)
           spec.loader.exec_module(ra)
 
-          files=[Path(f"/tmp/replay/{h:02d}.bin") for h in range(37,42)]
+          files=[Path(f"/tmp/replay/{h:02d}.bin") for h in range(3,9)]
           state={}
           matches={}
           slices=0
           first_ts=last_ts=None
-          sample_dlh=set()
+          sample_qfa=set()
           for path in files:
               for sl in ra.decode_file(path,state):
                   slices += 1
@@ -64,14 +64,14 @@ jobs:
                   last_ts=ts
                   for ac in sl["data"]:
                       cs=(ac.get("callsign") or "").strip()
-                      if cs.startswith("DLH"):
-                          sample_dlh.add(cs)
-                      if cs=="DLH732":
+                      if cs.startswith("QFA"):
+                          sample_qfa.add(cs)
+                      if cs=="QFA27":
                           hx=ac.get("hex")
                           rec=matches.setdefault(hx,{"count":0,"first":ts,"last":ts})
                           rec["count"] += 1
                           rec["last"] = ts
           print("REPLAY_RANGE", first_ts, last_ts, "slices", slices)
-          print("REPLAY_DLH732", matches)
-          print("REPLAY_DLH_SAMPLE", sorted(sample_dlh)[:80])
+          print("REPLAY_QFA27", matches)
+          print("REPLAY_QFA_SAMPLE", sorted(sample_qfa)[:80])
           PY
