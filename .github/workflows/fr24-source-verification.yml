@@ -308,3 +308,63 @@ jobs:
           }
           EOF
           go run old.go
+
+          echo "=== ANONYMOUS HISTORY CUTOFF TEST ==="
+          cat > cutoff.go <<'EOF'
+          package main
+
+          import (
+              "context"
+              "fmt"
+              "io"
+              "time"
+
+              fr "github.com/igolaizola/fr24/pkg/flightradar"
+          )
+
+          func main() {
+              ctx := context.Background()
+              c := fr.New()
+              _ = c.LoginFromEnvOrConfig()
+
+              dates := []struct{ y int; m time.Month; d int }{
+                  {2026, time.September, 21},
+                  {2026, time.September, 20},
+                  {2026, time.September, 15},
+                  {2026, time.September, 14},
+                  {2026, time.September, 13},
+                  {2026, time.September, 1},
+              }
+              for _, x := range dates {
+                  ts := time.Date(x.y, x.m, x.d, 23, 59, 59, 0, time.UTC).Unix()
+                  resp, err := c.FlightList(ctx, fr.FlightListParams{
+                      Flight: "LH732", Page: 1, Limit: 25, TimestampS: &ts,
+                  })
+                  if err != nil {
+                      fmt.Printf("CUTOFF date=%04d-%02d-%02d request_error=%v\n", x.y, x.m, x.d, err)
+                      continue
+                  }
+                  body, _ := io.ReadAll(resp.Body)
+                  _ = resp.Body.Close()
+                  recs, _ := fr.ParseFlightList(body)
+                  prefix := string(body)
+                  if len(prefix) > 180 { prefix = prefix[:180] }
+                  fmt.Printf("CUTOFF date=%04d-%02d-%02d status=%d records=%d body_prefix=%q\n",
+                      x.y, x.m, x.d, resp.StatusCode, len(recs), prefix)
+              }
+
+              // Verify the oldest completed flight returned by the successful recent lookup.
+              ts := time.Date(2026, time.September, 14, 19, 50, 16, 0, time.UTC).Unix()
+              resp, err := c.Playback(ctx, fr.PlaybackParams{FlightIDHex: "41a96bdd", TimestampS: &ts})
+              if err != nil {
+                  fmt.Printf("CUTOFF_PLAYBACK date=2026-09-14 request_error=%v\n", err)
+                  return
+              }
+              body, _ := io.ReadAll(resp.Body)
+              _ = resp.Body.Close()
+              pts, perr := fr.ParsePlayback(body)
+              fmt.Printf("CUTOFF_PLAYBACK date=2026-09-14 status=%d bytes=%d points=%d parse_error=%v\n",
+                  resp.StatusCode, len(body), len(pts), perr)
+          }
+          EOF
+          go run cutoff.go
