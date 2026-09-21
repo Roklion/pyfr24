@@ -33,6 +33,9 @@ jobs:
               "encoding/binary"
               "fmt"
               "io"
+              "net/http"
+              "net/url"
+              "strconv"
               "time"
 
               fr "github.com/igolaizola/fr24/pkg/flightradar"
@@ -204,7 +207,7 @@ jobs:
               }
               body, _ := io.ReadAll(resp.Body)
               _ = resp.Body.Close()
-              fmt.Printf("OLD_FLIGHTLIST_HTTP status=%d bytes=%d\n", resp.StatusCode, len(body))
+              fmt.Printf("OLD_FLIGHTLIST_HTTP status=%d bytes=%d body_prefix=%q\n", resp.StatusCode, len(body), string(body[:imin(len(body), 400)]))
               recs, err := fr.ParseFlightList(body)
               if err != nil {
                   fmt.Printf("OLD_FLIGHTLIST_PARSE_ERROR err=%v\n", err)
@@ -242,6 +245,56 @@ jobs:
                   fmt.Printf("OLD_PLAYBACK_POINTS id=%x status=%d count=%d\n", id, presp.StatusCode, len(pts))
               }
               fmt.Printf("OLD_EXACT_MATCHES count=%d\n", exact)
+
+              // Repeat with the historical-only filter used by the older abc8747 implementation.
+              q := url.Values{}
+              q.Set("query", "UA2151")
+              q.Set("fetchBy", "flight")
+              q.Set("page", "1")
+              q.Set("limit", "50")
+              q.Set("timestamp", strconv.FormatInt(ts, 10))
+              q.Set("filterBy", "historic")
+              q.Set("device", "web-source-verification")
+              req, _ := http.NewRequest("GET", "https://api.flightradar24.com/common/v1/flight/list.json?"+q.Encode(), nil)
+              req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:136.0) Gecko/20100101 Firefox/136.0")
+              req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+              req.Header.Set("Origin", "https://www.flightradar24.com")
+              req.Header.Set("Referer", "https://www.flightradar24.com/")
+              req.Header.Set("fr24-device-id", "web-source-verification")
+              fresp, ferr := http.DefaultClient.Do(req)
+              if ferr != nil {
+                  fmt.Printf("FILTERED_OLD_ERROR err=%v\n", ferr)
+                  return
+              }
+              fbody, _ := io.ReadAll(fresp.Body)
+              _ = fresp.Body.Close()
+              fmt.Printf("FILTERED_OLD_HTTP status=%d bytes=%d body_prefix=%q\n", fresp.StatusCode, len(fbody), string(fbody[:imin(len(fbody), 400)]))
+              frecs, ferr := fr.ParseFlightList(fbody)
+              if ferr != nil {
+                  fmt.Printf("FILTERED_OLD_PARSE_ERROR err=%v\n", ferr)
+                  return
+              }
+              fexact := 0
+              for i := range frecs {
+                  r := frecs[i]
+                  var t *int64
+                  if r.ATOD != nil { t = r.ATOD } else { t = r.STOD }
+                  if t == nil { continue }
+                  dt := time.Unix(*t/1000, 0).UTC()
+                  y, m, d := dt.Date()
+                  if y != 2025 || m != time.April || d != 22 { continue }
+                  fexact++
+                  id := int64(0)
+                  if r.FlightID != nil { id = *r.FlightID }
+                  fmt.Printf("FILTERED_OLD_MATCH idx=%d id_dec=%d id_hex=%x route=%s-%s reg=%s STOD=%s ATOD=%s\n",
+                      i, id, id, sv(r.Origin), sv(r.Destination), sv(r.Registration), tv(r.STOD), tv(r.ATOD))
+              }
+              fmt.Printf("FILTERED_OLD_EXACT_MATCHES count=%d total=%d\n", fexact, len(frecs))
+          }
+
+          func imin(a, b int) int {
+              if a < b { return a }
+              return b
           }
 
           func sv(p *string) string {
