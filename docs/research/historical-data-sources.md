@@ -399,20 +399,68 @@ The validation harness worked around these issues by:
 
 These findings should be considered if replay decoding code is incorporated into this project. Reimplementing the small required subset may be preferable to taking the third-party decoder as a dependency.
 
-## ADSB.lol historical traces
+## ADSB.lol historical data
 
-ADSB.lol exposes a similar per-aircraft historical trace structure.
+ADSB.lol was also tested because it exposes a tar1090-style historical trace archive with a layout similar to Airplanes.live.
 
-It succeeded for the August 15 `D-AIXD` test:
+The tested per-aircraft trace URL pattern is:
+
+```text
+https://adsb.lol/globe_history/YYYY/MM/DD/traces/HH/trace_full_HEX.json
+```
+
+where:
+
+- `HEX` is the aircraft ICAO 24-bit address
+- `HH` is the last two characters of the hex address
+
+No authentication, API key or account was used.
+
+### Successful shorter-horizon trace test
+
+For `D-AIXD`, ICAO hex `3c6704`, on August 15, 2026, approximately 37 days before the validation date:
 
 ```text
 HTTP 200
+Registration: D-AIXD
+Aircraft: A359
 Track points: 2,191
+Observed callsigns:
+- DLH712
+- DLH713
+- DLH732
+- DLH768
 ```
 
-It returned HTTP 404 for the tested July 31 and June 16 historical traces.
+The response was gzip encoded at the HTTP/content level and parsed successfully after decompression.
 
-Observed results:
+This is sufficient for the same downstream workflow used with Airplanes.live once the aircraft hex is known:
+
+```text
+aircraft hex + date
+        ↓
+ADSB.lol daily aircraft trace
+        ↓
+carry forward callsign state
+        ↓
+isolate the selected flight
+        ↓
+timestamped coordinates
+        ↓
+KML
+```
+
+### Tested history horizon
+
+The same URL pattern was tested at longer horizons.
+
+| Test | Approximate age | Result |
+| --- | ---: | --- |
+| D-AIXD on August 15, 2026 | 37 days | HTTP 200, 2,191 points |
+| D-AIXD on July 31, 2026 | 52 days | HTTP 404 |
+| VH-ZNB on June 16, 2026 | 97 days | HTTP 404 |
+
+For comparison:
 
 | Approximate age | Airplanes.live | ADSB.lol |
 | ---: | --- | --- |
@@ -420,9 +468,44 @@ Observed results:
 | 52 days | available | not found |
 | 97 days | available | not found |
 
-Airplanes.live is therefore the stronger historical source for this use case based on current testing.
+These tests do **not** establish an exact ADSB.lol retention cutoff. They only show that the tested 37-day trace existed while the tested 52-day and 97-day traces did not.
 
-ADSB.lol may still be useful as a fallback or for more recent historical data.
+The actual limit may depend on archive retention, aircraft/date coverage or source availability. It should therefore be probed dynamically rather than hard-coded as a fixed number of days.
+
+### Potential role in the provider stack
+
+ADSB.lol remains useful even if its historical window is shorter than Airplanes.live.
+
+A provider could be modeled as:
+
+```text
+ADSBLOLProvider
+    authentication: none
+    historical aircraft traces: verified at about 37 days
+    longer history: not verified
+    candidate lookup: still requires a callsign/hex discovery strategy
+    track output: compatible with the same normalization and KML pipeline
+```
+
+Possible uses include:
+
+- A fallback if Airplanes.live is unavailable
+- A second-source check for recent historical tracks
+- A preferred source when its data quality or coverage is better for a particular aircraft or region
+- A shorter-horizon provider if the requested date falls inside its available archive
+
+Because the trace structure is closely related to the tar1090-style data already needed for Airplanes.live, supporting ADSB.lol should require relatively little additional normalization logic once the provider abstraction exists.
+
+### Remaining ADSB.lol questions
+
+Before relying on ADSB.lol as a formal provider, test:
+
+- The actual retention boundary rather than only the 37, 52 and 97-day samples
+- Whether historical replay/index files are available for callsign-to-hex discovery
+- Regional and aircraft coverage consistency
+- Whether missing traces are caused by retention or by source coverage for a specific day
+- Rate limits and acceptable request frequency
+- Licensing and terms for derived data
 
 ## Flight number and ADS-B callsign mapping
 
@@ -530,10 +613,16 @@ FlightDataProvider
     │      anonymous
     │      about seven days verified
     │
-    └── AirplanesLiveProvider
-           historical ADS-B replay and traces
+    ├── AirplanesLiveProvider
+    │      historical ADS-B replay and traces
+    │      anonymous
+    │      at least about 97 days verified
+    │
+    └── ADSBLOLProvider
+           historical ADS-B traces
            anonymous
-           at least about 97 days verified
+           about 37 days verified
+           longer history not yet established
 ```
 
 The provider boundary should expose normalized domain objects instead of raw provider response structures.
