@@ -31,3 +31,30 @@ jobs:
               except Exception as e:
                   print(f"HEATMAP_HEAD_FAIL name={name} err={type(e).__name__}:{e}")
           PY
+
+      - name: Decode one hourly replay chunk and find DLH732
+        shell: bash
+        run: |
+          set -e
+          mkdir -p /tmp/replay
+          cd /tmp/replay
+          curl -fsSL -o 19.bin.ttf https://globe.airplanes.live/globe_history/2026/08/15/heatmap/19.bin.ttf
+          curl -fsSL -o replay_analyzer.py https://raw.githubusercontent.com/WeegeeNumbuh1/tar1090-replay-analyzer/main/replay_analyzer.py
+          python replay_analyzer.py 19.bin.ttf -o decoded.json >/tmp/decoder.log 2>&1
+          python - <<'PY'
+          import json
+          data=json.load(open("/tmp/replay/decoded.json","r",encoding="utf-8"))
+          matches={}
+          for sl in data:
+              ts=sl.get("timestamp")
+              for ac in sl.get("data",[]):
+                  cs=(ac.get("callsign") or "").strip()
+                  if cs=="DLH732":
+                      h=ac.get("hex")
+                      rec=matches.setdefault(h, {"count":0,"first":ts,"last":ts})
+                      rec["count"]+=1
+                      rec["last"]=ts
+          print("REPLAY_DLH732", matches)
+          print("REPLAY_SLICES", len(data))
+          PY
+          ls -lh 19.bin.ttf decoded.json
