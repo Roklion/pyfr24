@@ -40,7 +40,7 @@ jobs:
           cd /tmp/replay
           curl -fsSL -o replay_analyzer.py https://raw.githubusercontent.com/WeegeeNumbuh1/tar1090-replay-analyzer/main/replay_analyzer.py
           for h in 03 04 05 06 07 08; do
-            curl -fsSL -o "${h}.bin" "https://globe.airplanes.live/globe_history/2026/08/15/heatmap/${h}.bin.ttf"
+            curl -fsSL -o "${h}.bin" "https://globe.airplanes.live/globe_history/2026/06/16/heatmap/${h}.bin.ttf"
           done
           python - <<'PY'
           import importlib.util
