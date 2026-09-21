@@ -24,6 +24,7 @@ jobs:
           cd /tmp/fr24verify
           go mod init fr24verify
           go get github.com/igolaizola/fr24@v1.0.0
+          go get google.golang.org/protobuf@v1.34.1
           cat > main.go <<'EOF'
           package main
 
