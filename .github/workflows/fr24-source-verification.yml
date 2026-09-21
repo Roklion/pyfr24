@@ -387,35 +387,54 @@ jobs:
               c := fr.New()
               _ = c.LoginFromEnvOrConfig()
               ts := time.Date(2026, time.September, 14, 23, 59, 59, 0, time.UTC).Unix()
-              resp, err := c.FlightList(ctx, fr.FlightListParams{Flight: "AS61", Page: 1, Limit: 50, TimestampS: &ts})
-              if err != nil {
-                  fmt.Printf("MULTI_ERROR err=%v\n", err)
-                  return
-              }
-              body, _ := io.ReadAll(resp.Body)
-              _ = resp.Body.Close()
-              recs, perr := fr.ParseFlightList(body)
-              fmt.Printf("MULTI_HTTP status=%d total=%d parse_error=%v\n", resp.StatusCode, len(recs), perr)
               exact := 0
-              for i, r := range recs {
-                  if i < 30 {
-                      id0 := int64(0)
-                      if r.FlightID != nil { id0 = *r.FlightID }
-                      fmt.Printf("MULTI_ROW idx=%d id_hex=%x route=%s-%s reg=%s STOD=%s ATOD=%s\n",
-                          i, id0, sv(r.Origin), sv(r.Destination), sv(r.Registration), tv(r.STOD), tv(r.ATOD))
+
+              for page := 1; page <= 3; page++ {
+                  resp, err := c.FlightList(ctx, fr.FlightListParams{
+                      Flight: "AS61", Page: page, Limit: 50, TimestampS: &ts,
+                  })
+                  if err != nil {
+                      fmt.Printf("MULTI_ERROR page=%d err=%v\n", page, err)
+                      continue
                   }
-                  t := r.STOD
-                  if t == nil { t = r.ATOD }
-                  if t == nil { continue }
-                  dt := time.Unix(*t/1000, 0).UTC()
-                  y, m, d := dt.Date()
-                  if y != 2026 || m != time.September || d != 14 { continue }
-                  exact++
-                  id := int64(0)
-                  if r.FlightID != nil { id = *r.FlightID }
-                  fmt.Printf("MULTI_MATCH id_hex=%x route=%s-%s reg=%s type=%s STOD=%s ATOD=%s\n",
-                      id, sv(r.Origin), sv(r.Destination), sv(r.Registration), sv(r.Typecode), tv(r.STOD), tv(r.ATOD))
+                  body, _ := io.ReadAll(resp.Body)
+                  _ = resp.Body.Close()
+                  recs, perr := fr.ParseFlightList(body)
+                  fmt.Printf("MULTI_HTTP page=%d status=%d total=%d parse_error=%v\n",
+                      page, resp.StatusCode, len(recs), perr)
+
+                  for _, r := range recs {
+                      t := r.STOD
+                      if t == nil { t = r.ATOD }
+                      if t == nil { continue }
+                      dt := time.Unix(*t/1000, 0).UTC()
+                      y, m, d := dt.Date()
+                      if y != 2026 || m != time.September || d != 14 { continue }
+
+                      exact++
+                      id := int64(0)
+                      if r.FlightID != nil { id = *r.FlightID }
+                      fmt.Printf("MULTI_MATCH page=%d id_hex=%x route=%s-%s reg=%s type=%s STOD=%s ATOD=%s\n",
+                          page, id, sv(r.Origin), sv(r.Destination), sv(r.Registration), sv(r.Typecode), tv(r.STOD), tv(r.ATOD))
+
+                      if r.FlightID != nil {
+                          dep := *t / 1000
+                          presp, err := c.Playback(ctx, fr.PlaybackParams{
+                              FlightIDHex: fmt.Sprintf("%x", id), TimestampS: &dep,
+                          })
+                          if err != nil {
+                              fmt.Printf("MULTI_PLAYBACK_ERROR id=%x err=%v\n", id, err)
+                              continue
+                          }
+                          pbody, _ := io.ReadAll(presp.Body)
+                          _ = presp.Body.Close()
+                          pts, perr := fr.ParsePlayback(pbody)
+                          fmt.Printf("MULTI_PLAYBACK id=%x status=%d points=%d parse_error=%v\n",
+                              id, presp.StatusCode, len(pts), perr)
+                      }
+                  }
               }
+
               fmt.Printf("MULTI_EXACT_MATCHES count=%d\n", exact)
           }
 
@@ -428,5 +447,4 @@ jobs:
               if p == nil { return "-" }
               return time.Unix(*p/1000, 0).UTC().Format(time.RFC3339)
           }
-          EOF
-          go run multileg.go
+          EOF         go run multileg.go
