@@ -178,3 +178,80 @@ jobs:
           }
           EOF
           go run .
+
+          echo "=== OLD MULTI-MATCH TEST: UA2151 on 2025-04-22 ==="
+          cat > old.go <<'EOF'
+          package main
+
+          import (
+              "context"
+              "fmt"
+              "io"
+              "time"
+
+              fr "github.com/igolaizola/fr24/pkg/flightradar"
+          )
+
+          func main() {
+              ctx := context.Background()
+              c := fr.New()
+              _ = c.LoginFromEnvOrConfig()
+              ts := time.Date(2025, 4, 22, 23, 59, 59, 0, time.UTC).Unix()
+              resp, err := c.FlightList(ctx, fr.FlightListParams{Flight: "UA2151", Page: 1, Limit: 50, TimestampS: &ts})
+              if err != nil {
+                  fmt.Printf("OLD_FLIGHTLIST_ERROR err=%v\n", err)
+                  return
+              }
+              body, _ := io.ReadAll(resp.Body)
+              _ = resp.Body.Close()
+              fmt.Printf("OLD_FLIGHTLIST_HTTP status=%d bytes=%d\n", resp.StatusCode, len(body))
+              recs, err := fr.ParseFlightList(body)
+              if err != nil {
+                  fmt.Printf("OLD_FLIGHTLIST_PARSE_ERROR err=%v\n", err)
+                  return
+              }
+              fmt.Printf("OLD_FLIGHTLIST_RESULT count=%d\n", len(recs))
+              exact := 0
+              for i := range recs {
+                  r := recs[i]
+                  var t *int64
+                  if r.ATOD != nil { t = r.ATOD } else { t = r.STOD }
+                  if t == nil { continue }
+                  dt := time.Unix(*t/1000, 0).UTC()
+                  y, m, d := dt.Date()
+                  if y != 2025 || m != time.April || d != 22 { continue }
+                  exact++
+                  id := int64(0)
+                  if r.FlightID != nil { id = *r.FlightID }
+                  fmt.Printf("OLD_MATCH idx=%d id_dec=%d id_hex=%x route=%s-%s reg=%s STOD=%s ATOD=%s\n",
+                      i, id, id, sv(r.Origin), sv(r.Destination), sv(r.Registration), tv(r.STOD), tv(r.ATOD))
+                  if r.FlightID == nil { continue }
+                  dep := *t / 1000
+                  presp, err := c.Playback(ctx, fr.PlaybackParams{FlightIDHex: fmt.Sprintf("%x", id), TimestampS: &dep})
+                  if err != nil {
+                      fmt.Printf("OLD_PLAYBACK_ERROR id=%x err=%v\n", id, err)
+                      continue
+                  }
+                  pbody, _ := io.ReadAll(presp.Body)
+                  _ = presp.Body.Close()
+                  pts, perr := fr.ParsePlayback(pbody)
+                  if perr != nil {
+                      fmt.Printf("OLD_PLAYBACK_PARSE_ERROR id=%x status=%d bytes=%d err=%v\n", id, presp.StatusCode, len(pbody), perr)
+                      continue
+                  }
+                  fmt.Printf("OLD_PLAYBACK_POINTS id=%x status=%d count=%d\n", id, presp.StatusCode, len(pts))
+              }
+              fmt.Printf("OLD_EXACT_MATCHES count=%d\n", exact)
+          }
+
+          func sv(p *string) string {
+              if p == nil { return "-" }
+              return *p
+          }
+
+          func tv(p *int64) string {
+              if p == nil { return "-" }
+              return time.Unix(*p/1000, 0).UTC().Format(time.RFC3339)
+          }
+          EOF
+          go run old.go
