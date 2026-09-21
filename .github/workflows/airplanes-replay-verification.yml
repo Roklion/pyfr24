@@ -39,6 +39,12 @@ jobs:
           mkdir -p /tmp/replay
           cd /tmp/replay
           curl -fsSL -o replay_analyzer.py https://raw.githubusercontent.com/WeegeeNumbuh1/tar1090-replay-analyzer/main/replay_analyzer.py
+          python - <<'PY'
+          p="replay_analyzer.py"
+          s=open(p,encoding="utf-8").read()
+          s=s.replace('struct.pack("<II", lon_raw, packed)', 'struct.pack("<II", lon_raw & 0xFFFFFFFF, packed & 0xFFFFFFFF)')
+          open(p,"w",encoding="utf-8").write(s)
+          PY
           for h in 03 04 05 06 07 08; do
             curl -fsSL -o "${h}.bin" "https://globe.airplanes.live/globe_history/2026/06/16/heatmap/${h}.bin.ttf"
           done
