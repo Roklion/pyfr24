@@ -33,9 +33,6 @@ jobs:
               "encoding/binary"
               "fmt"
               "io"
-              "net/http"
-              "net/url"
-              "strconv"
               "time"
 
               fr "github.com/igolaizola/fr24/pkg/flightradar"
@@ -190,6 +187,9 @@ jobs:
               "context"
               "fmt"
               "io"
+              "net/http"
+              "net/url"
+              "strconv"
               "time"
 
               fr "github.com/igolaizola/fr24/pkg/flightradar"
