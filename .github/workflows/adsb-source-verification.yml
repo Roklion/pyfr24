@@ -1,0 +1,54 @@
+name: ADSB historical source verification
+
+on:
+  push:
+    branches:
+      - test/fr24-source-verification
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test unauthenticated historical trace URLs
+        shell: bash
+        run: |
+          set -e
+          python - <<'PY'
+          import json, urllib.request, gzip, io
+
+          tests = [
+              ("adsb.lol", "2026-08-15", "3c6704", "LH732 / D-AIXD (~37d)"),
+              ("adsb.lol", "2026-07-31", "3c6704", "LH732 / D-AIXD (~52d)"),
+              ("adsb.lol", "2026-06-16", "7c8065", "QF27 / VH-ZNB (~97d)"),
+              ("globe.airplanes.live", "2026-08-15", "3c6704", "LH732 / D-AIXD (~37d)"),
+              ("globe.airplanes.live", "2026-07-31", "3c6704", "LH732 / D-AIXD (~52d)"),
+              ("globe.airplanes.live", "2026-06-16", "7c8065", "QF27 / VH-ZNB (~97d)"),
+          ]
+
+          for host, date, hexc, label in tests:
+              yyyy, mm, dd = date.split("-")
+              url = f"https://{host}/globe_history/{yyyy}/{mm}/{dd}/traces/{hexc[-2:]}/trace_full_{hexc}.json"
+              req = urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      raw = r.read()
+                      status = r.status
+                      enc = r.headers.get("Content-Encoding")
+                      ctype = r.headers.get("Content-Type")
+                  if raw[:2] == b"\x1f\x8b":
+                      raw = gzip.decompress(raw)
+                  data = json.loads(raw)
+                  trace = data.get("trace", [])
+                  flights = []
+                  for p in trace:
+                      if len(p) > 8 and isinstance(p[8], dict):
+                          fl = (p[8].get("flight") or "").strip()
+                          if fl and fl not in flights:
+                              flights.append(fl)
+                  print(f"TRACE host={host} date={date} hex={hexc} label={label} status={status} bytes={len(raw)} points={len(trace)} reg={data.get('r')} type={data.get('t')} callsigns={flights[:12]} encoding={enc} content_type={ctype}")
+              except Exception as e:
+                  print(f"TRACE_FAIL host={host} date={date} hex={hexc} label={label} err={type(e).__name__}:{e}")
+          PY
