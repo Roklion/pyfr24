@@ -32,36 +32,46 @@ jobs:
                   print(f"HEATMAP_HEAD_FAIL name={name} err={type(e).__name__}:{e}")
           PY
 
-      - name: Decode one hourly replay chunk and find DLH732
+      - name: Decode sequential replay chunks and find DLH732
         shell: bash
         run: |
           set -e
           mkdir -p /tmp/replay
           cd /tmp/replay
-          curl -fsSL -o 19.bin.ttf https://globe.airplanes.live/globe_history/2026/08/15/heatmap/19.bin.ttf
           curl -fsSL -o replay_analyzer.py https://raw.githubusercontent.com/WeegeeNumbuh1/tar1090-replay-analyzer/main/replay_analyzer.py
-          echo "REPLAY_FILE_INFO $(file 19.bin.ttf)"
-          echo -n "REPLAY_FIRST_BYTES "; xxd -l 16 -p 19.bin.ttf
-          cp 19.bin.ttf 19.bin
-          if ! python replay_analyzer.py 19.bin -o decoded.json >/tmp/decoder.log 2>&1; then
-            echo "REPLAY_DECODER_FAILED"
-            cat /tmp/decoder.log
-            exit 1
-          fi
+          for h in 17 18 19 20 21 22 23; do
+            curl -fsSL -o "${h}.bin" "https://globe.airplanes.live/globe_history/2026/08/15/heatmap/${h}.bin.ttf"
+          done
           python - <<'PY'
-          import json
-          data=json.load(open("/tmp/replay/decoded.json","r",encoding="utf-8"))
+          import importlib.util
+          from pathlib import Path
+
+          spec=importlib.util.spec_from_file_location("ra","/tmp/replay/replay_analyzer.py")
+          ra=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(ra)
+
+          files=[Path(f"/tmp/replay/{h:02d}.bin") for h in range(17,24)]
+          state={}
           matches={}
-          for sl in data:
-              ts=sl.get("timestamp")
-              for ac in sl.get("data",[]):
-                  cs=(ac.get("callsign") or "").strip()
-                  if cs=="DLH732":
-                      h=ac.get("hex")
-                      rec=matches.setdefault(h, {"count":0,"first":ts,"last":ts})
-                      rec["count"]+=1
-                      rec["last"]=ts
+          slices=0
+          first_ts=last_ts=None
+          sample_dlh=set()
+          for path in files:
+              for sl in ra.decode_file(path,state):
+                  slices += 1
+                  ts=sl["timestamp"].isoformat()
+                  first_ts=first_ts or ts
+                  last_ts=ts
+                  for ac in sl["data"]:
+                      cs=(ac.get("callsign") or "").strip()
+                      if cs.startswith("DLH"):
+                          sample_dlh.add(cs)
+                      if cs=="DLH732":
+                          hx=ac.get("hex")
+                          rec=matches.setdefault(hx,{"count":0,"first":ts,"last":ts})
+                          rec["count"] += 1
+                          rec["last"] = ts
+          print("REPLAY_RANGE", first_ts, last_ts, "slices", slices)
           print("REPLAY_DLH732", matches)
-          print("REPLAY_SLICES", len(data))
+          print("REPLAY_DLH_SAMPLE", sorted(sample_dlh)[:80])
           PY
-          ls -lh 19.bin.ttf decoded.json
