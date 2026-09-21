@@ -1,0 +1,33 @@
+name: Airplanes.live replay verification
+
+on:
+  push:
+    branches:
+      - test/fr24-source-verification
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe historical replay chunks
+        shell: bash
+        run: |
+          python - <<'PY'
+          import urllib.request, urllib.error
+
+          base = "https://globe.airplanes.live/globe_history/2026/08/15/heatmap"
+          names = ["00.bin.ttf","01.bin.ttf","02.bin.ttf","03.bin.ttf","06.bin.ttf","0c.bin.ttf","12.bin.ttf","17.bin.ttf","23.bin.ttf","ff.bin.ttf","heatmap.bin.ttf"]
+          for name in names:
+              url=f"{base}/{name}"
+              req=urllib.request.Request(url, method="HEAD", headers={"User-Agent":"Mozilla/5.0"})
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      print(f"HEATMAP_HEAD name={name} status={r.status} len={r.headers.get('Content-Length')} type={r.headers.get('Content-Type')} enc={r.headers.get('Content-Encoding')}")
+              except urllib.error.HTTPError as e:
+                  print(f"HEATMAP_HEAD_FAIL name={name} status={e.code}")
+              except Exception as e:
+                  print(f"HEATMAP_HEAD_FAIL name={name} err={type(e).__name__}:{e}")
+          PY
