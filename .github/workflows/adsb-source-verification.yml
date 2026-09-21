@@ -52,3 +52,43 @@ jobs:
               except Exception as e:
                   print(f"TRACE_FAIL host={host} date={date} hex={hexc} label={label} err={type(e).__name__}:{e}")
           PY
+
+          # SEGMENT_TEST: prove a full-day trace can be reduced to the selected flight.
+          python - <<'PY'
+          import json, urllib.request
+          from datetime import datetime, timezone
+
+          url="https://globe.airplanes.live/globe_history/2026/06/16/traces/65/trace_full_7c8065.json"
+          with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"}), timeout=30) as r:
+              data=json.load(r)
+
+          # tar1090 trace format stores metadata deltas on individual points.
+          # Carry the last callsign forward until it changes.
+          target="QFA27"
+          current=None
+          selected=[]
+          transitions=[]
+          base=float(data.get("timestamp", 0))
+          for p in data.get("trace", []):
+              meta = p[8] if len(p) > 8 and isinstance(p[8], dict) else {}
+              if "flight" in meta and meta["flight"] is not None:
+                  nxt=str(meta["flight"]).strip()
+                  if nxt != current:
+                      transitions.append((p[0], current, nxt))
+                  current=nxt
+              if current == target:
+                  selected.append(p)
+
+          print("SEGMENT_TARGET", target)
+          print("SEGMENT_POINTS", len(selected))
+          if selected:
+              first=selected[0]
+              last=selected[-1]
+              print("SEGMENT_FIRST", first[:7])
+              print("SEGMENT_LAST", last[:7])
+              if base:
+                  print("SEGMENT_UTC",
+                        datetime.fromtimestamp(base+float(first[0]), timezone.utc).isoformat(),
+                        datetime.fromtimestamp(base+float(last[0]), timezone.utc).isoformat())
+          print("SEGMENT_TRANSITIONS", transitions[:12])
+          PY
