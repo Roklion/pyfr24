@@ -397,7 +397,13 @@ jobs:
               recs, perr := fr.ParseFlightList(body)
               fmt.Printf("MULTI_HTTP status=%d total=%d parse_error=%v\n", resp.StatusCode, len(recs), perr)
               exact := 0
-              for _, r := range recs {
+              for i, r := range recs {
+                  if i < 30 {
+                      id0 := int64(0)
+                      if r.FlightID != nil { id0 = *r.FlightID }
+                      fmt.Printf("MULTI_ROW idx=%d id_hex=%x route=%s-%s reg=%s STOD=%s ATOD=%s\n",
+                          i, id0, sv(r.Origin), sv(r.Destination), sv(r.Registration), tv(r.STOD), tv(r.ATOD))
+                  }
                   t := r.STOD
                   if t == nil { t = r.ATOD }
                   if t == nil { continue }
