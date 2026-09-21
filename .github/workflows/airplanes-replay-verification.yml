@@ -42,7 +42,8 @@ jobs:
           curl -fsSL -o replay_analyzer.py https://raw.githubusercontent.com/WeegeeNumbuh1/tar1090-replay-analyzer/main/replay_analyzer.py
           echo "REPLAY_FILE_INFO $(file 19.bin.ttf)"
           echo -n "REPLAY_FIRST_BYTES "; xxd -l 16 -p 19.bin.ttf
-          if ! python replay_analyzer.py 19.bin.ttf -o decoded.json >/tmp/decoder.log 2>&1; then
+          cp 19.bin.ttf 19.bin
+          if ! python replay_analyzer.py 19.bin -o decoded.json >/tmp/decoder.log 2>&1; then
             echo "REPLAY_DECODER_FAILED"
             cat /tmp/decoder.log
             exit 1
