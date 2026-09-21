@@ -1,0 +1,179 @@
+name: FR24 source verification
+
+on:
+  push:
+    branches:
+      - test/fr24-source-verification
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Verify anonymous historical lookup and tracks
+        shell: bash
+        run: |
+          set -e
+          mkdir -p /tmp/fr24verify
+          cd /tmp/fr24verify
+          go mod init fr24verify
+          go get github.com/igolaizola/fr24@v1.0.0
+          cat > main.go <<'EOF'
+          package main
+
+          import (
+              "context"
+              "encoding/binary"
+              "fmt"
+              "io"
+              "time"
+
+              fr "github.com/igolaizola/fr24/pkg/flightradar"
+              pb "github.com/igolaizola/fr24/pkg/proto"
+              "google.golang.org/protobuf/proto"
+          )
+
+          func msToTime(p *int64) string {
+              if p == nil { return "-" }
+              return time.Unix(*p/1000, 0).UTC().Format(time.RFC3339)
+          }
+
+          func secFromMS(p *int64) int64 {
+              if p == nil { return 0 }
+              return *p / 1000
+          }
+
+          func onDate(p *int64, y int, m time.Month, d int) bool {
+              if p == nil { return false }
+              t := time.Unix(*p/1000, 0).UTC()
+              yy, mm, dd := t.Date()
+              return yy == y && mm == m && dd == d
+          }
+
+          func parseHistoricTrailFrame(b []byte) (*pb.HistoricTrailResponse, error) {
+              if len(b) < 5 { return nil, fmt.Errorf("short grpc-web response: %d bytes", len(b)) }
+              if b[0] != 0 { return nil, fmt.Errorf("first grpc-web frame is not data: flag=%d", b[0]) }
+              n := int(binary.BigEndian.Uint32(b[1:5]))
+              if n <= 0 || len(b) < 5+n {
+                  return nil, fmt.Errorf("invalid grpc-web frame length=%d body=%d", n, len(b))
+              }
+              var out pb.HistoricTrailResponse
+              if err := proto.Unmarshal(b[5:5+n], &out); err != nil { return nil, err }
+              return &out, nil
+          }
+
+          func main() {
+              ctx := context.Background()
+              c := fr.New()
+              _ = c.LoginFromEnvOrConfig()
+              fmt.Printf("AUTH_MODE=%s\n", c.AuthMode())
+
+              targetEnd := time.Date(2026, 9, 20, 23, 59, 59, 0, time.UTC).Unix()
+              flights := []string{"LH732", "CX255", "UA2151"}
+
+              var selected *fr.FlightListRecord
+              for _, number := range flights {
+                  ts := targetEnd
+                  resp, err := c.FlightList(ctx, fr.FlightListParams{
+                      Flight: number, Page: 1, Limit: 25, TimestampS: &ts,
+                  })
+                  if err != nil {
+                      fmt.Printf("FLIGHTLIST_ERROR flight=%s err=%v\n", number, err)
+                      continue
+                  }
+                  body, _ := io.ReadAll(resp.Body)
+                  _ = resp.Body.Close()
+                  fmt.Printf("FLIGHTLIST_HTTP flight=%s status=%d bytes=%d\n", number, resp.StatusCode, len(body))
+                  recs, err := fr.ParseFlightList(body)
+                  if err != nil {
+                      fmt.Printf("FLIGHTLIST_PARSE_ERROR flight=%s err=%v body_prefix=%q\n", number, err, string(body[:min(len(body), 300)]))
+                      continue
+                  }
+                  fmt.Printf("FLIGHTLIST_RESULT flight=%s count=%d\n", number, len(recs))
+                  for i := range recs {
+                      r := &recs[i]
+                      id := int64(0)
+                      if r.FlightID != nil { id = *r.FlightID }
+                      fmt.Printf("CANDIDATE flight=%s idx=%d id_dec=%d id_hex=%x route=%v-%v reg=%v type=%v STOD=%s ATOD=%s\n",
+                          number, i, id, id, val(r.Origin), val(r.Destination), val(r.Registration), val(r.Typecode), msToTime(r.STOD), msToTime(r.ATOD))
+                      if selected == nil && r.FlightID != nil &&
+                          (onDate(r.ATOD, 2026, time.September, 20) || onDate(r.STOD, 2026, time.September, 20)) {
+                          copy := *r
+                          selected = &copy
+                      }
+                  }
+              }
+
+              if selected == nil {
+                  fmt.Println("SELECTED_NONE exact_date=2026-09-20")
+                  return
+              }
+
+              id := *selected.FlightID
+              dep := secFromMS(selected.ATOD)
+              if dep == 0 { dep = secFromMS(selected.STOD) }
+              fmt.Printf("SELECTED id_dec=%d id_hex=%x flight=%v route=%v-%v departure_ts=%d\n",
+                  id, id, val(selected.Number), val(selected.Origin), val(selected.Destination), dep)
+
+              // Legacy JSON playback: this should return the full coordinate trail if still usable.
+              ts := dep
+              presp, err := c.Playback(ctx, fr.PlaybackParams{FlightIDHex: fmt.Sprintf("%x", id), TimestampS: &ts})
+              if err != nil {
+                  fmt.Printf("JSON_PLAYBACK_ERROR err=%v\n", err)
+              } else {
+                  body, _ := io.ReadAll(presp.Body)
+                  _ = presp.Body.Close()
+                  fmt.Printf("JSON_PLAYBACK_HTTP status=%d bytes=%d\n", presp.StatusCode, len(body))
+                  pts, perr := fr.ParsePlayback(body)
+                  if perr != nil {
+                      fmt.Printf("JSON_PLAYBACK_PARSE_ERROR err=%v body_prefix=%q\n", perr, string(body[:min(len(body), 300)]))
+                  } else {
+                      fmt.Printf("JSON_PLAYBACK_POINTS count=%d\n", len(pts))
+                      if len(pts) > 0 {
+                          a, z := pts[0], pts[len(pts)-1]
+                          fmt.Printf("JSON_PLAYBACK_FIRST ts=%d lat=%.5f lon=%.5f alt=%.0f\n", a.Timestamp, a.Latitude, a.Longitude, a.AltitudeFeet)
+                          fmt.Printf("JSON_PLAYBACK_LAST ts=%d lat=%.5f lon=%.5f alt=%.0f\n", z.Timestamp, z.Latitude, z.Longitude, z.AltitudeFeet)
+                      }
+                  }
+              }
+
+              // gRPC HistoricTrail: alternate full-trail path, marked unstable by upstream.
+              hresp, err := c.GrpcHistoricTrail(ctx, uint32(id))
+              if err != nil {
+                  fmt.Printf("GRPC_HISTORIC_ERROR err=%v\n", err)
+              } else {
+                  body, _ := io.ReadAll(hresp.Body)
+                  _ = hresp.Body.Close()
+                  fmt.Printf("GRPC_HISTORIC_HTTP status=%d bytes=%d\n", hresp.StatusCode, len(body))
+                  hist, herr := parseHistoricTrailFrame(body)
+                  if herr != nil {
+                      fmt.Printf("GRPC_HISTORIC_PARSE_ERROR err=%v body_prefix=%x\n", herr, body[:min(len(body), 80)])
+                  } else {
+                      pts := hist.GetRadarRecordsList()
+                      fmt.Printf("GRPC_HISTORIC_POINTS count=%d\n", len(pts))
+                      if len(pts) > 0 {
+                          a, z := pts[0], pts[len(pts)-1]
+                          fmt.Printf("GRPC_HISTORIC_FIRST ts=%d lat=%.5f lon=%.5f alt=%d\n", a.GetTimestamp(), a.GetLat(), a.GetLon(), a.GetAltitude())
+                          fmt.Printf("GRPC_HISTORIC_LAST ts=%d lat=%.5f lon=%.5f alt=%d\n", z.GetTimestamp(), z.GetLat(), z.GetLon(), z.GetAltitude())
+                      }
+                  }
+              }
+          }
+
+          func val(p *string) string {
+              if p == nil { return "-" }
+              return *p
+          }
+
+          func min(a, b int) int {
+              if a < b { return a }
+              return b
+          }
+          EOF
+          go run .
