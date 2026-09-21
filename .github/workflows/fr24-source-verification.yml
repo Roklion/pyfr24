@@ -447,4 +447,5 @@ jobs:
               if p == nil { return "-" }
               return time.Unix(*p/1000, 0).UTC().Format(time.RFC3339)
           }
-          EOF         go run multileg.go
+          EOF
+          go run multileg.go
