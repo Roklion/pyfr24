@@ -368,3 +368,59 @@ jobs:
           }
           EOF
           go run cutoff.go
+
+          echo "=== MULTIPLE SAME-DAY MATCH TEST: AS61 on 2026-09-14 ==="
+          cat > multileg.go <<'EOF'
+          package main
+
+          import (
+              "context"
+              "fmt"
+              "io"
+              "time"
+
+              fr "github.com/igolaizola/fr24/pkg/flightradar"
+          )
+
+          func main() {
+              ctx := context.Background()
+              c := fr.New()
+              _ = c.LoginFromEnvOrConfig()
+              ts := time.Date(2026, time.September, 14, 23, 59, 59, 0, time.UTC).Unix()
+              resp, err := c.FlightList(ctx, fr.FlightListParams{Flight: "AS61", Page: 1, Limit: 50, TimestampS: &ts})
+              if err != nil {
+                  fmt.Printf("MULTI_ERROR err=%v\n", err)
+                  return
+              }
+              body, _ := io.ReadAll(resp.Body)
+              _ = resp.Body.Close()
+              recs, perr := fr.ParseFlightList(body)
+              fmt.Printf("MULTI_HTTP status=%d total=%d parse_error=%v\n", resp.StatusCode, len(recs), perr)
+              exact := 0
+              for _, r := range recs {
+                  t := r.STOD
+                  if t == nil { t = r.ATOD }
+                  if t == nil { continue }
+                  dt := time.Unix(*t/1000, 0).UTC()
+                  y, m, d := dt.Date()
+                  if y != 2026 || m != time.September || d != 14 { continue }
+                  exact++
+                  id := int64(0)
+                  if r.FlightID != nil { id = *r.FlightID }
+                  fmt.Printf("MULTI_MATCH id_hex=%x route=%s-%s reg=%s type=%s STOD=%s ATOD=%s\n",
+                      id, sv(r.Origin), sv(r.Destination), sv(r.Registration), sv(r.Typecode), tv(r.STOD), tv(r.ATOD))
+              }
+              fmt.Printf("MULTI_EXACT_MATCHES count=%d\n", exact)
+          }
+
+          func sv(p *string) string {
+              if p == nil { return "-" }
+              return *p
+          }
+
+          func tv(p *int64) string {
+              if p == nil { return "-" }
+              return time.Unix(*p/1000, 0).UTC().Format(time.RFC3339)
+          }
+          EOF
+          go run multileg.go
